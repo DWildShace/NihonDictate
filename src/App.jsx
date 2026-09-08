@@ -1,14 +1,15 @@
 // src/App.jsx
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { BookOpen, Mic, Keyboard, Layers, HelpCircle, CheckCircle2, Award, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
+import { BookOpen, Mic, Keyboard, Layers, HelpCircle, CheckCircle2, Award, ChevronLeft, ChevronRight, AlertTriangle, PartyPopper } from 'lucide-react';
 import { Header } from './components/Header';
 import { VideoPlayer } from './components/VideoPlayer';
 import { DictationCard } from './components/DictationCard';
 import { SentenceList } from './components/SentenceList';
 import { SubtitlesTab } from './components/SubtitlesTab';
 import { ShadowingTab } from './components/ShadowingTab';
+import { FlashcardModal } from './components/FlashcardModal';
 import { SAMPLE_LESSONS } from './data/sampleLessons';
-import { getLessonProgress, saveSentenceProgress } from './utils/storage';
+import { getLessonProgress, saveSentenceProgress, getFlashcards } from './utils/storage';
 import { sanitizeRelativeTimestamps } from './utils/relativeTimestamps';
 
 export function App() {
@@ -25,10 +26,27 @@ export function App() {
   const [showSubtitlesOnVideo, setShowSubtitlesOnVideo] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [playbackRate, setPlaybackRate] = useState(1.0);
+  const [isLooping, setIsLooping] = useState(false);
+  const [audioBuffer, setAudioBuffer] = useState(0.25); // Đệm âm thanh mặc định 0.25s
+
+  // Trạng thái Flashcard Modal
+  const [isFlashcardModalOpen, setIsFlashcardModalOpen] = useState(false);
+  const [flashcardsCount, setFlashcardsCount] = useState(() => getFlashcards().length);
 
   // Lưu trữ tiến độ học
   const [completedMap, setCompletedMap] = useState({});
   const videoPlayerRef = useRef(null);
+
+  const handleChangePlaybackRate = (rate) => {
+    setPlaybackRate(rate);
+    videoPlayerRef.current?.setPlaybackRate?.(rate);
+  };
+
+  const handleToggleLoop = (loop) => {
+    setIsLooping(loop);
+    videoPlayerRef.current?.setLooping?.(loop);
+  };
 
   // Tải tiến độ từ LocalStorage khi đổi bài học
   useEffect(() => {
@@ -44,14 +62,14 @@ export function App() {
   const completedCount = Object.keys(completedMap).length;
   const totalCount = currentLesson?.sentences?.length || 0;
 
-  // Gọi phát câu hiện tại và tua video chính xác
-  const handlePlaySentence = useCallback((sentence) => {
+  // Gọi phát câu hiện tại và tua video chính xác (hỗ trợ khoảng đệm âm thanh lead-in/lead-out)
+  const handlePlaySentence = useCallback((sentence, customBuffer) => {
     const target = sentence || activeSentence;
     if (!target) return;
     setIsPlayingSegment(true);
-    // 👉 Kích hoạt trực tiếp lệnh tua video và phát tức thì:
-    videoPlayerRef.current?.playSentence(target);
-  }, [activeSentence]);
+    const buf = customBuffer !== undefined ? customBuffer : audioBuffer;
+    videoPlayerRef.current?.playSentence(target, buf);
+  }, [activeSentence, audioBuffer]);
 
   // Xử lý khi người dùng hoàn thành 1 câu
   const handleSentenceCompleted = (sentenceId, resultData) => {
@@ -120,48 +138,44 @@ export function App() {
   // Trạng thái thông báo cảnh báo ràng buộc chuyển câu
   const [gateWarning, setGateWarning] = useState('');
 
-  // Lắng nghe phím tắt toàn cục: Ctrl+Space (nghe lại), Ctrl+N (câu kế)
+  // Lắng nghe phím tắt toàn cục (Chuẩn công thái học, không xung đột phím tắt mặc định của trình duyệt)
   useEffect(() => {
     const handleGlobalKeyDown = (e) => {
-      // Ctrl + Space: Nghe lại câu hiện tại tức thì
+      // 1. Ctrl + Space: Nghe lại câu hiện tại tức thì (Bỏ Alt+Space vì xung đột Windows system menu)
       if (e.ctrlKey && e.code === 'Space') {
         e.preventDefault();
         handlePlaySentence(activeSentence);
+        return;
       }
 
-      // Ctrl + N hoặc Alt + N: Chuyển câu tiếp theo (có ràng buộc Hướng A)
-      if ((e.ctrlKey || e.altKey) && (e.key === 'n' || e.key === 'N')) {
+      // 2. Alt + N hoặc Alt + ArrowRight hoặc Alt + ArrowDown: Chuyển câu tiếp theo (có ràng buộc hoàn thành)
+      if (e.altKey && (e.key === 'n' || e.key === 'N' || e.key === 'ArrowRight' || e.key === 'ArrowDown')) {
         e.preventDefault();
         const isCurrentDone = !!completedMap[activeSentence?.id];
         if (isCurrentDone) {
           handleNextSentence();
         } else {
-          setGateWarning(`⚠️ Hãy hoàn thành hoặc bấm "Bỏ qua" câu số ${activeSentence?.id || ''} trước khi sang câu tiếp theo (Ctrl+N)!`);
+          setGateWarning(`⚠️ Hãy hoàn thành hoặc bấm "Bỏ qua" câu số ${activeSentence?.id || ''} trước khi sang câu tiếp theo (Alt+N)!`);
           setTimeout(() => setGateWarning(''), 3500);
         }
+        return;
       }
 
-      // Alt + ArrowDown: Sang câu kế
-      if (e.altKey && e.key === 'ArrowDown') {
-        e.preventDefault();
-        if (completedMap[activeSentence?.id]) {
-          handleNextSentence();
-        }
-      }
-      // Alt + ArrowUp: Lùi câu trước
-      if (e.altKey && e.key === 'ArrowUp') {
+      // 3. Alt + P hoặc Alt + ArrowLeft hoặc Alt + ArrowUp: Lùi về câu trước
+      if (e.altKey && (e.key === 'p' || e.key === 'P' || e.key === 'ArrowLeft' || e.key === 'ArrowUp')) {
         e.preventDefault();
         handlePrevSentence();
+        return;
       }
     };
 
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [activeIndex, currentLesson, completedMap, activeSentence]);
+  }, [activeIndex, currentLesson, completedMap, activeSentence, handlePlaySentence]);
 
   return (
     <div className="min-h-screen flex flex-col bg-[#090d16] text-slate-100 selection:bg-emerald-500 selection:text-slate-950 font-sans">
-      {/* Header thanh điều khiển URL & Tiến độ */}
+      {/* Header thanh điều khiển URL & Tiến độ & Flashcard Button */}
       <Header
         onLoadUrl={handleLoadUrl}
         isLoading={isLoading}
@@ -172,6 +186,8 @@ export function App() {
         })}
         completedCount={completedCount}
         totalCount={totalCount}
+        onOpenFlashcards={() => setIsFlashcardModalOpen(true)}
+        flashcardsCount={flashcardsCount}
       />
 
       {/* Thông báo lỗi nếu dán link không hợp lệ */}
@@ -231,6 +247,7 @@ export function App() {
             onSegmentFinished={() => setIsPlayingSegment(false)}
             showSubtitlesOnVideo={showSubtitlesOnVideo}
             setShowSubtitlesOnVideo={setShowSubtitlesOnVideo}
+            audioBuffer={audioBuffer}
           />
 
           {/* Tiêu đề & Thông tin bài học hiện tại */}
@@ -342,6 +359,23 @@ export function App() {
                   </button>
                 </div>
 
+                {/* Thông báo chúc mừng khi hoàn thành tất cả câu */}
+                {completedCount > 0 && completedCount === totalCount && (
+                  <div className="mb-4 p-4 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 flex items-center justify-between gap-3 shadow-lg animate-fadeIn">
+                    <div className="flex items-center gap-2.5">
+                      <PartyPopper className="w-6 h-6 text-emerald-400 shrink-0" />
+                      <div>
+                        <p className="font-bold text-sm text-emerald-200">
+                          Xuất sắc! Bạn đã hoàn thành toàn bộ {totalCount} câu trong bài học!
+                        </p>
+                        <p className="text-xs text-emerald-400/80">
+                          Bạn có thể bấm vào danh sách bên dưới để chọn câu bất kỳ và ôn tập lại.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Card gõ chính tả câu hiện tại */}
                 <DictationCard
                   sentence={activeSentence}
@@ -350,6 +384,19 @@ export function App() {
                   onSentenceCompleted={handleSentenceCompleted}
                   onNextSentence={handleNextSentence}
                   isLastSentence={activeIndex === currentLesson.sentences.length - 1}
+                  playbackRate={playbackRate}
+                  onChangePlaybackRate={handleChangePlaybackRate}
+                  isLooping={isLooping}
+                  onToggleLoop={handleToggleLoop}
+                  audioBuffer={audioBuffer}
+                  onChangeAudioBuffer={(buf) => {
+                    setAudioBuffer(buf);
+                    videoPlayerRef.current?.setAudioBuffer?.(buf);
+                  }}
+                  onOpenFlashcards={() => setIsFlashcardModalOpen(true)}
+                  onCardAdded={() => setFlashcardsCount(getFlashcards().length)}
+                  lessonTitle={currentLesson.title}
+                  videoId={currentLesson.videoId}
                 />
 
                 {/* Danh sách hàng chờ các câu (phong cách pills placeholder như ảnh mẫu) */}
@@ -397,6 +444,13 @@ export function App() {
           </div>
         </section>
       </main>
+
+      {/* Modal Sổ Flashcards & Xuất file Anki/Quizlet */}
+      <FlashcardModal
+        isOpen={isFlashcardModalOpen}
+        onClose={() => setIsFlashcardModalOpen(false)}
+        onCardChange={(count) => setFlashcardsCount(count)}
+      />
     </div>
   );
 }

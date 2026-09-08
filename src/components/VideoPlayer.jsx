@@ -12,15 +12,26 @@ export const VideoPlayer = forwardRef(function VideoPlayer({
   onSegmentFinished,
   showSubtitlesOnVideo = false,
   setShowSubtitlesOnVideo,
+  audioBuffer = 0.25, // Khoảng đệm âm thanh mặc định 0.25s
 }, ref) {
   const playerRef = useRef(null);
   const checkIntervalRef = useRef(null);
   const lastPausedIdRef = useRef(null);
+  const currentSegmentSentenceRef = useRef(null);
+  const isSeekingRef = useRef(false);
+  const seekTargetRef = useRef(0);
+  const seekStartTimeRef = useRef(0);
+
   const [isReady, setIsReady] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1.0);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isLooping, setIsLooping] = useState(false);
+  const [activeBuffer, setActiveBuffer] = useState(audioBuffer);
+
+  useEffect(() => {
+    setActiveBuffer(audioBuffer);
+  }, [audioBuffer]);
 
   // Khởi tạo YouTube IFrame Player
   useEffect(() => {
@@ -94,7 +105,8 @@ export const VideoPlayer = forwardRef(function VideoPlayer({
     };
   }, [videoId]);
 
-  const currentSegmentSentenceRef = useRef(null);
+  const bufferRef = useRef(activeBuffer);
+  bufferRef.current = activeBuffer;
 
   // Hook theo dõi thời gian và tự động dừng khi phát hết câu (Auto-Pause)
   useEffect(() => {
@@ -120,14 +132,38 @@ export const VideoPlayer = forwardRef(function VideoPlayer({
             // TRƯỜNG HỢP 1: Đang phát một câu được chỉ định (Segment Lock)
             if (currentSegmentSentenceRef.current) {
               const target = currentSegmentSentenceRef.current;
-              // Ngưỡng dừng chính xác tại mốc end của câu (không có buffer kéo dài)
-              if (time >= target.end) {
+              const stopTime = target.stopTime || target.end;
+
+              // Nếu đang trong quá trình tua (seek) đến mốc câu mới
+              if (isSeekingRef.current) {
+                const elapsed = Date.now() - seekStartTimeRef.current;
+                const targetSeek = seekTargetRef.current;
+
+                // Kiểm tra xem YouTube đã nhảy đến gần mốc seekTime chưa
+                const hasArrived =
+                  (targetSeek === 0 && time < 1.0) ||
+                  Math.abs(time - targetSeek) < 0.6 ||
+                  (time >= targetSeek && time < stopTime);
+
+                if (hasArrived || elapsed > 1500) {
+                  // Đã đến vị trí câu mới hoặc timeout an toàn 1.5s
+                  isSeekingRef.current = false;
+                } else {
+                  // YouTube iframe vẫn đang tua ở mốc thời gian cũ -> Tuyệt đối không ngắt nhầm!
+                  return;
+                }
+              }
+
+              // Dừng an toàn tại ngưỡng stopTime (đã bao gồm lead-out buffer)
+              if (time >= stopTime) {
                 if (isLooping) {
-                  const seekTime = Math.max(0, target.start);
-                  playerRef.current.seekTo(seekTime, true);
+                  const loopSeekTime = target.seekTime ?? Math.max(0, target.start);
+                  isSeekingRef.current = true;
+                  seekTargetRef.current = loopSeekTime;
+                  seekStartTimeRef.current = Date.now();
+                  playerRef.current.seekTo(loopSeekTime, true);
                   playerRef.current.playVideo();
                 } else {
-                  // 👉 DỪNG NGAY LẬP TỨC TRƯỚC KHI CÂU TIẾP THEO BẮT ĐẦU
                   playerRef.current.pauseVideo();
                   lastPausedIdRef.current = target.id;
                   currentSegmentSentenceRef.current = null;
@@ -141,7 +177,6 @@ export const VideoPlayer = forwardRef(function VideoPlayer({
             }
 
             // TRƯỜNG HỢP 2: Người dùng tua video tự do trên thanh tiến trình YouTube
-            // Tìm chính xác câu thuộc khoảng thời gian hiện tại - KHÔNG CÓ BUFFER DƯ THỪA
             const matchedSentence = sentences.find(
               s => time >= s.start && time < s.end
             );
@@ -179,8 +214,8 @@ export const VideoPlayer = forwardRef(function VideoPlayer({
     };
   }, [isReady, sentences, activeSentence, isLooping, autoPause, onSegmentFinished, onSentenceChange]);
 
-  // Hàm phát câu được chỉ định - Bắt đầu chính xác từ start, khóa phân đoạn và ngắt ở end
-  const playSentence = useCallback((sentence) => {
+  // Hàm phát câu được chỉ định - Có khoảng đệm an toàn lead-in & lead-out
+  const playSentence = useCallback((sentence, customBuffer) => {
     const target = sentence || activeSentence;
     if (!target) return;
 
@@ -190,12 +225,27 @@ export const VideoPlayer = forwardRef(function VideoPlayer({
     }
 
     try {
-      // Khóa câu đang phát để không bị thuật toán tìm kiếm ghi đè
-      currentSegmentSentenceRef.current = target;
+      const buf = customBuffer !== undefined ? customBuffer : bufferRef.current;
+      const leadIn = Math.max(0, Number(buf || 0));
+
+      // Tua lùi một khoảng đệm an toàn ở đầu để tránh trễ âm YouTube và không nuốt âm đầu
+      const seekTime = Math.max(0, parseFloat((target.start - leadIn).toFixed(2)));
+      // Dừng chính xác tại mốc kết thúc câu target.end - Tuyệt đối không nới đuôi để tránh đọc lấn sang câu sau
+      const stopTime = parseFloat(Number(target.end).toFixed(2));
+
+      // Bật cờ kiểm soát seek để không bị ngắt nhầm bởi thời gian cũ
+      isSeekingRef.current = true;
+      seekTargetRef.current = seekTime;
+      seekStartTimeRef.current = Date.now();
+
+      // Khóa câu đang phát kèm các mốc đệm
+      currentSegmentSentenceRef.current = {
+        ...target,
+        seekTime,
+        stopTime,
+      };
       lastPausedIdRef.current = null;
 
-      // Tua chính xác về mốc bắt đầu của câu (không lead-in lùi để tránh dính đuôi câu trước)
-      const seekTime = Math.max(0, target.start);
       playerRef.current.seekTo(seekTime, true);
       playerRef.current.playVideo();
       setIsPlayingSegment(true);
@@ -206,8 +256,12 @@ export const VideoPlayer = forwardRef(function VideoPlayer({
 
   // Xuất các phương thức điều khiển trực tiếp ra ref cho App.jsx
   useImperativeHandle(ref, () => ({
-    playSentence: (target) => {
-      playSentence(target);
+    playSentence: (target, customBuffer) => {
+      playSentence(target, customBuffer);
+    },
+    setAudioBuffer: (val) => {
+      setActiveBuffer(val);
+      bufferRef.current = val;
     },
     seekTo: (time) => {
       if (playerRef.current && typeof playerRef.current.seekTo === 'function') {
@@ -224,6 +278,15 @@ export const VideoPlayer = forwardRef(function VideoPlayer({
       if (playerRef.current && typeof playerRef.current.playVideo === 'function') {
         playerRef.current.playVideo();
       }
+    },
+    setPlaybackRate: (rate) => {
+      setPlaybackRate(rate);
+      if (playerRef.current && typeof playerRef.current.setPlaybackRate === 'function') {
+        playerRef.current.setPlaybackRate(rate);
+      }
+    },
+    setLooping: (loop) => {
+      setIsLooping(loop);
     },
   }), [playSentence]);
 

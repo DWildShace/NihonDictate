@@ -9,6 +9,8 @@ export function Header({
   onSelectSample,
   completedCount,
   totalCount,
+  onOpenFlashcards,
+  flashcardsCount = 0,
 }) {
   const [urlInput, setUrlInput] = useState('');
 
@@ -72,7 +74,7 @@ export function Header({
             {isLoading ? (
               <>
                 <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>Đang tải...</span>
+                <span>Đang xử lý phụ đề...</span>
               </>
             ) : (
               <>
@@ -102,6 +104,19 @@ export function Header({
               ))}
             </select>
           </div>
+
+          {/* Nút mở Sổ Flashcard */}
+          <button
+            onClick={onOpenFlashcards}
+            className="px-3 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-sm"
+            title="Mở Sổ Flashcards & Từ vựng để ôn tập hoặc xuất file Anki/Quizlet"
+          >
+            <BookmarkCheck className="w-4 h-4 text-amber-400" />
+            <span>Flashcards</span>
+            <span className="px-1.5 py-0.2 rounded-full bg-amber-500/30 text-amber-200 text-[11px] font-bold">
+              {flashcardsCount}
+            </span>
+          </button>
 
           {/* Desktop Progress Indicator */}
           <div className="hidden lg:flex items-center gap-2.5 bg-slate-900/90 border border-slate-800 rounded-xl px-3 py-1.5">

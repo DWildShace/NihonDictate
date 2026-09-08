@@ -2,59 +2,70 @@
 
 /**
  * Tính toán tương đối mốc thời gian giữa các câu liên tiếp:
- * - Đảm bảo đuôi của câu trước (sentence[i].end) luôn kết thúc trước đầu câu sau (sentence[i+1].start)
- *   một khoảng đệm an toàn (safeGap ~0.22s).
- * - Triệt tiêu hoàn toàn khả năng bị nghe dính âm tiết đầu của câu kế tiếp do độ trễ dừng của YouTube Iframe.
- * - Đảm bảo độ dài mỗi câu vẫn hợp lý (không bị co ngắn dưới minDuration).
+ * Chuyển 0.2s của cuối câu hiện tại sang đầu câu kế tiếp:
+ * - Cuối câu hiện tại (cur.end) lùi lại 0.2s: Tuyệt đối không bị đọc lấn sang câu sau.
+ * - Đầu câu kế tiếp (next.start) nhận 0.2s đó: Bắt đầu sớm hơn 0.2s để đón trọn âm đầu không bị nuốt chữ.
  *
  * @param {Array} sentences - Danh sách câu với các trường { id, start, end, duration, ... }
- * @param {number} safeGap - Khoảng cách an toàn tối thiểu giữa đuôi câu trước và đầu câu sau (mặc định 0.22s)
+ * @param {number} shiftGap - Thời gian chuyển từ cuối câu này sang đầu câu kế tiếp (mặc định 0.2s)
  * @param {number} minDuration - Thời lượng tối thiểu một câu (mặc định 0.6s)
- * @returns {Array} Danh sách câu đã được chuẩn hóa mốc thời gian tương đối
+ * @returns {Array} Danh sách câu đã được chuẩn hóa mốc thời gian
  */
-export function sanitizeRelativeTimestamps(sentences = [], safeGap = 0.22, minDuration = 0.6) {
+export function sanitizeRelativeTimestamps(sentences = [], shiftGap = 0.2, minDuration = 0.6) {
   if (!Array.isArray(sentences) || sentences.length === 0) return [];
 
-  const result = [];
+  const list = sentences.map((s, idx) => ({
+    ...s,
+    id: s.id !== undefined ? s.id : idx + 1,
+    start: parseFloat(Number(s.start || 0).toFixed(2)),
+    end: parseFloat(Number(s.end || (Number(s.start || 0) + (s.duration || 2.0))).toFixed(2)),
+  }));
 
-  for (let i = 0; i < sentences.length; i++) {
-    const cur = sentences[i];
-    const curStart = parseFloat(Number(cur.start || 0).toFixed(2));
-    let curEnd = parseFloat(Number(cur.end || (curStart + (cur.duration || 2.0))).toFixed(2));
+  for (let i = 0; i < list.length - 1; i++) {
+    const cur = list[i];
+    const next = list[i + 1];
 
-    // Nếu có câu kế tiếp, tính toán tương đối khoảng cách giữa đuôi câu này và đầu câu sau
-    if (i < sentences.length - 1) {
-      const next = sentences[i + 1];
-      const nextStart = parseFloat(Number(next.start || 0).toFixed(2));
+    const curStart = cur.start;
+    const curEnd = cur.end;
+    const nextStart = next.start;
 
-      // Nếu đuôi câu hiện tại sát hoặc lấn qua đầu câu sau (khoảng cách < safeGap)
-      if (curEnd > nextStart - safeGap) {
-        const adjustedEnd = parseFloat((nextStart - safeGap).toFixed(2));
+    // Khoảng cách ban đầu giữa đuôi câu này và đầu câu kế tiếp
+    const gap = nextStart - curEnd;
 
-        // Nếu sau khi lùi lại vẫn đảm bảo độ dài tối thiểu của câu
-        if (adjustedEnd >= curStart + minDuration) {
-          curEnd = adjustedEnd;
-        } else if (nextStart > curStart + 0.3) {
-          // Trường hợp câu ngắn, lấy điểm dừng trước câu sau ít nhất 0.08s
-          curEnd = parseFloat((nextStart - 0.08).toFixed(2));
-        }
+    if (gap < shiftGap) {
+      // Hai câu liền kề hoặc rất sát nhau (< 0.5s)
+      // Chuyển 0.5s từ đuôi câu hiện tại sang cho đầu câu kế tiếp
+      const rawBoundary = Math.min(curEnd, nextStart);
+      let newBoundary = parseFloat((rawBoundary - shiftGap).toFixed(2));
+
+      // Giữ thời lượng tối thiểu cho câu hiện tại
+      if (newBoundary < curStart + minDuration) {
+        newBoundary = parseFloat(Math.min(rawBoundary, curStart + minDuration).toFixed(2));
       }
+
+      // Giữ thời lượng tối thiểu cho câu kế tiếp
+      if (newBoundary >= next.end - minDuration) {
+        newBoundary = parseFloat(Math.max(curStart + minDuration, next.end - minDuration).toFixed(2));
+      }
+
+      // 1. Cuối câu hiện tại lùi lại newBoundary
+      cur.end = newBoundary;
+      // 2. Đầu câu kế tiếp nhận 0.5s bắt đầu từ newBoundary
+      next.start = newBoundary;
+    } else {
+      // Có khoảng lặng giữa 2 câu (>= 0.5s)
+      // Câu hiện tại giữ nguyên không bị lấn, câu sau lùi sớm hơn shiftGap để đón âm đầu
+      next.start = parseFloat(Math.max(cur.end, next.start - shiftGap).toFixed(2));
     }
 
-    // Đảm bảo end luôn lớn hơn start
-    if (curEnd <= curStart) {
-      curEnd = parseFloat((curStart + minDuration).toFixed(2));
-    }
-
-    const finalDuration = parseFloat((curEnd - curStart).toFixed(2));
-
-    result.push({
-      ...cur,
-      start: curStart,
-      end: curEnd,
-      duration: finalDuration,
-    });
+    cur.duration = parseFloat((cur.end - cur.start).toFixed(2));
+    next.duration = parseFloat((next.end - next.start).toFixed(2));
   }
 
-  return result;
+  if (list.length > 0) {
+    const last = list[list.length - 1];
+    last.duration = parseFloat((last.end - last.start).toFixed(2));
+  }
+
+  return list;
 }

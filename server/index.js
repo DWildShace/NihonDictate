@@ -2,6 +2,7 @@
 import express from 'express';
 import cors from 'cors';
 import { fetchYouTubeSubtitles, translateJaToVi, extractVideoId } from './services/youtubeSubtitles.js';
+import { getTokenizer } from './services/japaneseTokenizer.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -14,7 +15,7 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });
 
-// API trích xuất phụ đề từ YouTube URL
+// API trích xuất phụ đề từ YouTube URL (Tổng quát hóa cho mọi video)
 app.post('/api/subtitles/extract', async (req, res) => {
   try {
     const { url } = req.body;
@@ -27,7 +28,7 @@ app.post('/api/subtitles/extract', async (req, res) => {
       return res.status(400).json({ error: 'Đường dẫn YouTube không hợp lệ.' });
     }
 
-    console.log(`[SUBTITLES] Đang tải phụ đề cho Video ID: ${videoId}...`);
+    console.log(`[SUBTITLES] Bắt đầu xử lý cho Video ID: ${videoId}...`);
     const data = await fetchYouTubeSubtitles(url);
     res.json(data);
   } catch (err) {
@@ -36,7 +37,7 @@ app.post('/api/subtitles/extract', async (req, res) => {
   }
 });
 
-// API dịch nghĩa câu Nhật -> Việt bổ sung
+// API dịch nghĩa câu Nhật -> Việt bổ sung (On-Demand)
 app.post('/api/translate', async (req, res) => {
   try {
     const { text } = req.body;
@@ -52,4 +53,6 @@ app.post('/api/translate', async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`🚀 NihonDictate Backend đang chạy tại http://localhost:${PORT}`);
+  // Nạp trước Kuromoji Tokenizer vào RAM
+  getTokenizer().catch(err => console.error('[TOKENIZER INIT ERROR]:', err.message));
 });
