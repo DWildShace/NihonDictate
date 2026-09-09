@@ -60,6 +60,7 @@ export function DictationCard({
 
   const inputRef = useRef(null);
   const caretPosRef = useRef(null);
+  const isComposingRef = useRef(false);
 
   // Cập nhật bufferSetting khi prop thay đổi
   useEffect(() => {
@@ -75,32 +76,55 @@ export function DictationCard({
 
   const isCompleted = !!(checkResult?.isCorrect || hasGivenUp);
 
-  // Tự động gắn kết bộ gõ WanaKana IME trên thẻ Input nguyên bản
-  // Giúp chuyển Romaji -> Hiragana chuẩn xác tại caret position mà không nhảy con trỏ về cuối câu
-  useEffect(() => {
-    const el = inputRef.current;
-    if (!el) return;
-
-    if (autoIme && !isCompleted) {
-      try {
-        wanakana.bind(el, { IMEMode: 'toHiragana' });
-      } catch (err) {
-        console.warn('[WanaKana bind error]:', err);
-      }
-    } else {
-      try {
-        wanakana.unbind(el);
-      } catch (err) {}
+  /**
+   * Chuyển đổi Romaji thành Hiragana tại vị trí con trỏ thuần túy trong React state.
+   * Hoạt động đồng bộ 100%, hỗ trợ chèn/sửa ở bất kỳ vị trí nào trong câu mà không bị nhảy con trỏ về cuối,
+   * không bị lùi 1 nhịp và không làm biến dạng ký tự Hiragana khi nhấn Backspace, Enter hoặc Phát lại.
+   */
+  const convertRomajiAtCursor = (text, cursor) => {
+    if (cursor <= 0 || !text) {
+      return { value: text, cursor, changed: false };
     }
 
-    return () => {
-      if (el) {
-        try {
-          wanakana.unbind(el);
-        } catch (e) {}
+    const charsBeforeCursor = [...text.slice(0, cursor)];
+    const nonJapaneseChunk = [];
+    const headChars = [];
+
+    let foundJapanese = false;
+    for (let i = charsBeforeCursor.length - 1; i >= 0; i--) {
+      const ch = charsBeforeCursor[i];
+      if (!foundJapanese && !wanakana.isJapanese(ch)) {
+        nonJapaneseChunk.unshift(ch);
+      } else {
+        foundJapanese = true;
+        headChars.unshift(ch);
       }
+    }
+
+    const head = headChars.join('');
+    const toConvert = nonJapaneseChunk.join('');
+    const tail = text.slice(cursor);
+
+    const convertedText = wanakana.toKana(toConvert, { IMEMode: true });
+    const changed = toConvert !== convertedText;
+    const newCursor = head.length + convertedText.length;
+
+    return {
+      value: head + convertedText + tail,
+      cursor: newCursor,
+      changed,
     };
-  }, [autoIme, isCompleted, sentence?.id]);
+  };
+
+  // Cập nhật tọa độ con trỏ liên tục từ DOM input
+  const updateCaretPos = () => {
+    if (inputRef.current) {
+      caretPosRef.current = {
+        start: inputRef.current.selectionStart,
+        end: inputRef.current.selectionEnd,
+      };
+    }
+  };
 
   // Reset trạng thái khi chuyển câu mới
   useEffect(() => {
@@ -117,6 +141,7 @@ export function DictationCard({
     setSelectedText('');
     setSavedFlashcardToast('');
     caretPosRef.current = null;
+    isComposingRef.current = false;
 
     // Tự động focus vào ô nhập liệu
     const timer = setTimeout(() => {
@@ -126,7 +151,7 @@ export function DictationCard({
   }, [sentence?.id]);
 
   // Bảo toàn vị trí con trỏ (Caret) khi người dùng gõ / chỉnh sửa ở giữa câu
-  // Đảm bảo sau khi React re-render, con trỏ không bao giờ bị văng về cuối câu
+  // Đảm bảo sau mọi lần React re-render (kể cả khi phát lại, lặp câu, gợi ý), con trỏ luôn ở đúng vị trí
   useLayoutEffect(() => {
     if (caretPosRef.current && inputRef.current && document.activeElement === inputRef.current) {
       const { start, end } = caretPosRef.current;
@@ -136,15 +161,30 @@ export function DictationCard({
         } catch (e) {}
       }
     }
-  }, [userInput]);
+  });
 
-  // Phát câu hiện tại (kèm khoảng đệm buffer đã chọn)
+  // Phát câu hiện tại (kèm khoảng đệm buffer đã chọn) - Luôn bảo toàn vị trí con trỏ
   const handlePlayClick = () => {
+    if (inputRef.current) {
+      caretPosRef.current = {
+        start: inputRef.current.selectionStart,
+        end: inputRef.current.selectionEnd,
+      };
+    }
+
     if (onPlaySentence) {
       onPlaySentence(sentence, bufferSetting);
     }
+
     setTimeout(() => {
-      inputRef.current?.focus();
+      if (inputRef.current) {
+        inputRef.current.focus();
+        if (caretPosRef.current) {
+          try {
+            inputRef.current.setSelectionRange(caretPosRef.current.start, caretPosRef.current.end);
+          } catch (e) {}
+        }
+      }
     }, 50);
   };
 
@@ -153,18 +193,49 @@ export function DictationCard({
     const target = e.target;
     if (validationError) setValidationError('');
 
-    // Ghi nhớ vị trí con trỏ trước khi React re-render
-    caretPosRef.current = {
-      start: target.selectionStart,
-      end: target.selectionEnd,
-    };
+    const rawValue = target.value;
+    const rawCursor = target.selectionEnd ?? rawValue.length;
 
-    setUserInput(target.value);
+    // Nếu đang trong quá trình gõ IME hệ điều hành (Windows IME / Unikey), để IME tự quản lý
+    if (e.nativeEvent?.isComposing || isComposingRef.current) {
+      caretPosRef.current = {
+        start: target.selectionStart,
+        end: target.selectionEnd,
+      };
+      setUserInput(rawValue);
+      return;
+    }
+
+    if (autoIme) {
+      const res = convertRomajiAtCursor(rawValue, rawCursor);
+      caretPosRef.current = {
+        start: res.cursor,
+        end: res.cursor,
+      };
+      setUserInput(res.value);
+    } else {
+      caretPosRef.current = {
+        start: target.selectionStart,
+        end: target.selectionEnd,
+      };
+      setUserInput(rawValue);
+    }
   };
 
   // Ràng buộc khi bấm nút Kiểm tra
   const handleCheck = () => {
-    const trimmed = userInput.trim();
+    // Nếu autoIme đang bật, tự động hoàn thiện nốt các ký tự Romaji dở dang (ví dụ trailing 'n' -> 'ん')
+    let textToCheck = userInput;
+    if (autoIme && textToCheck) {
+      const finalized = wanakana.toKana(textToCheck);
+      if (finalized !== textToCheck) {
+        textToCheck = finalized;
+        setUserInput(finalized);
+        caretPosRef.current = { start: finalized.length, end: finalized.length };
+      }
+    }
+
+    const trimmed = textToCheck.trim();
 
     if (!trimmed) {
       triggerShake('Vui lòng gõ những gì bạn nghe được trước khi bấm Kiểm tra!');
@@ -355,6 +426,10 @@ export function DictationCard({
 
     // 7. Enter: Kiểm tra hoặc Sang câu kế
     if (e.key === 'Enter') {
+      // Nếu đang trong quá trình gõ IME (Windows Japanese IME / Unikey), không can thiệp để IME commit ký tự
+      if (e.nativeEvent?.isComposing || isComposingRef.current) {
+        return;
+      }
       e.preventDefault();
       const isDone = checkResult?.isCorrect || hasGivenUp;
       if (isDone) {
@@ -407,6 +482,7 @@ export function DictationCard({
             ].map((item) => (
               <button
                 key={item.val}
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={() => {
                   setBufferSetting(item.val);
                   if (onChangeAudioBuffer) onChangeAudioBuffer(item.val);
@@ -425,6 +501,7 @@ export function DictationCard({
 
           {/* Nút bật/tắt lặp lại câu */}
           <button
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => onToggleLoop && onToggleLoop(!isLooping)}
             className={`px-2 py-1 rounded-lg text-xs font-medium flex items-center gap-1 transition cursor-pointer border ${
               isLooping
@@ -442,6 +519,7 @@ export function DictationCard({
             {[0.75, 1.0, 1.25].map((rate) => (
               <button
                 key={rate}
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={() => onChangePlaybackRate && onChangePlaybackRate(rate)}
                 className={`px-1.5 py-0.5 rounded transition cursor-pointer font-mono text-[10px] ${
                   playbackRate === rate
@@ -463,8 +541,9 @@ export function DictationCard({
 
       {/* 2. Khung nhập liệu Dictation */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
-        {/* Nút Nghe câu trên giao diện */}
+        {/* Nút Nghe câu trên giao diện (onMouseDown e.preventDefault() để giữ focus và con trỏ không văng) */}
         <button
+          onMouseDown={(e) => e.preventDefault()}
           onClick={handlePlayClick}
           className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 transition-all cursor-pointer shadow-lg relative ${
             isPlaying
@@ -497,6 +576,16 @@ export function DictationCard({
             value={userInput}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
+            onKeyUp={updateCaretPos}
+            onClick={updateCaretPos}
+            onSelect={updateCaretPos}
+            onCompositionStart={() => {
+              isComposingRef.current = true;
+            }}
+            onCompositionEnd={(e) => {
+              isComposingRef.current = false;
+              handleInputChange(e);
+            }}
             disabled={isCompleted}
             placeholder={
               autoIme
@@ -554,6 +643,7 @@ export function DictationCard({
       {/* Toggle Bộ gõ Romaji -> Hiragana */}
       <div className="mt-2 flex items-center justify-between text-xs text-slate-400 px-1">
         <button
+          onMouseDown={(e) => e.preventDefault()}
           onClick={() => setAutoIme(!autoIme)}
           className="flex items-center gap-1.5 text-slate-400 hover:text-emerald-400 transition cursor-pointer"
           title="Tự động đổi chữ cái Latin (Romaji) thành Hiragana khi gõ trực tiếp trong ô, hỗ trợ chèn sửa ở mọi vị trí"
@@ -616,6 +706,7 @@ export function DictationCard({
             </div>
 
             <button
+              onMouseDown={(e) => e.preventDefault()}
               onClick={handlePlayClick}
               className="text-xs text-slate-400 hover:text-emerald-400 flex items-center gap-1 transition cursor-pointer"
             >
@@ -755,6 +846,7 @@ export function DictationCard({
           <div className="flex flex-wrap items-center gap-2">
             {/* Gợi ý ký tự đầu */}
             <button
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => setShowHintFirstChar(!showHintFirstChar)}
               className="text-slate-400 hover:text-slate-200 bg-slate-800/60 hover:bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-700/60 transition cursor-pointer flex items-center gap-1"
             >
@@ -764,6 +856,7 @@ export function DictationCard({
 
             {/* Gợi ý Furigana / Hiragana */}
             <button
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => setShowHintFurigana(!showHintFurigana)}
               className="text-slate-400 hover:text-slate-200 bg-slate-800/60 hover:bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-700/60 transition cursor-pointer flex items-center gap-1"
               title="Gợi ý cách đọc Furigana / Hiragana (Phím tắt: Alt+F)"
@@ -774,6 +867,7 @@ export function DictationCard({
 
             {/* Gợi ý nghĩa tiếng Việt */}
             <button
+              onMouseDown={(e) => e.preventDefault()}
               onClick={handleToggleMeaningHint}
               className="text-slate-400 hover:text-slate-200 bg-slate-800/60 hover:bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-700/60 transition cursor-pointer flex items-center gap-1"
               title="Xem bản dịch nghĩa tiếng Việt (Phím tắt: Alt+H)"
@@ -791,6 +885,7 @@ export function DictationCard({
 
           {/* Bỏ qua câu (Xem đáp án để mở khóa câu kế) */}
           <button
+            onMouseDown={(e) => e.preventDefault()}
             onClick={handleGiveUp}
             className="text-slate-500 hover:text-rose-400 transition cursor-pointer text-xs underline underline-offset-2"
             title="Bỏ qua câu này và xem đáp án để mở khóa câu tiếp theo (Phím tắt: Alt+S)"
