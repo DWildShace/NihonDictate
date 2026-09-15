@@ -27,18 +27,27 @@ export function QuickFlashcardBar({
   const [autoTranslation, setAutoTranslation] = useState('');
   const [isTranslating, setIsTranslating] = useState(false);
 
-  // Chế độ gõ / sửa tay từ vựng
+  // Chế độ gõ / sửa tay từ vựng tiếng Nhật
   const [isEditing, setIsEditing] = useState(false);
   const [editedText, setEditedText] = useState('');
+
+  // Chế độ chỉnh sửa nghĩa tiếng Việt
+  const [customMeaning, setCustomMeaning] = useState('');
+  const [isEditingMeaning, setIsEditingMeaning] = useState(false);
+  const [editedMeaning, setEditedMeaning] = useState('');
 
   const rawText = selection?.text?.trim() || '';
   const originalSentenceText = activeSentence?.text || selection?.originalSentenceText || '';
   const abortControllerRef = useRef(null);
   const editInputRef = useRef(null);
+  const meaningInputRef = useRef(null);
 
   useEffect(() => {
     setEditedText(rawText);
     setIsEditing(false);
+    setCustomMeaning('');
+    setIsEditingMeaning(false);
+    setEditedMeaning('');
   }, [rawText]);
 
   // Tự động lấy nghĩa dịch tiếng Việt khi từ bôi đen thay đổi
@@ -94,19 +103,38 @@ export function QuickFlashcardBar({
 
   // Tính toán cách đọc: nếu là Hiragana/Katakana thì giữ nguyên, nếu có kana thì chuyển sang Hiragana
   const reading = selection?.reading || wanakana.toHiragana(rawText);
-  const translation = autoTranslation || selection?.vietnamese || activeSentence?.vietnamese || '';
+  // Nghĩa hiển thị ưu tiên theo nghĩa người dùng đã tự sửa (nếu có)
+  const currentTranslation = customMeaning || autoTranslation || selection?.vietnamese || activeSentence?.vietnamese || '';
 
   // Xử lý lưu thẻ
   const handleSave = async () => {
-    if (isSaving || !rawText) return;
+    if (isSaving) return;
+
+    // Lấy nội dung mới nhất ngay cả khi người dùng đang mở ô sửa mà chưa bấm nút tick
+    const finalFront = (isEditing ? editedText : rawText).trim();
+    if (!finalFront) return;
+
+    const rawMeaning = isEditingMeaning ? editedMeaning : currentTranslation;
+    const finalBack = rawMeaning?.trim() || 'Từ vựng tiếng Nhật';
+
+    // Đóng chế độ sửa nếu đang mở
+    if (isEditing) {
+      if (onSelectText) onSelectText(finalFront);
+      setIsEditing(false);
+    }
+    if (isEditingMeaning) {
+      setCustomMeaning(finalBack);
+      setIsEditingMeaning(false);
+    }
+
     setIsSaving(true);
 
     try {
       const cardData = {
-        front: rawText,
-        reading: reading || rawText,
-        back: translation || 'Từ vựng tiếng Nhật',
-        context: activeSentence?.text || selection?.context || rawText,
+        front: finalFront,
+        reading: reading || finalFront,
+        back: finalBack,
+        context: activeSentence?.text || selection?.context || finalFront,
         contextVi: activeSentence?.vietnamese || selection?.contextVi || '',
         timestamp: activeSentence
           ? `${activeSentence.start}s - ${activeSentence.end}s`
@@ -118,11 +146,11 @@ export function QuickFlashcardBar({
       if (onSave) {
         const result = await onSave(cardData);
         const msg = result?.isUpdated
-          ? `Đã cập nhật thẻ 「${rawText}」! ⭐`
-          : `Đã lưu 「${rawText}」 vào Flashcards! ⭐`;
+          ? `Đã cập nhật thẻ 「${finalFront}」! ⭐`
+          : `Đã lưu 「${finalFront}」 vào Flashcards! ⭐`;
         setSavedToast(msg);
       } else {
-        setSavedToast(`Đã lưu 「${rawText}」 vào Flashcards! ⭐`);
+        setSavedToast(`Đã lưu 「${finalFront}」 vào Flashcards! ⭐`);
       }
 
       setTimeout(() => {
@@ -135,13 +163,30 @@ export function QuickFlashcardBar({
     }
   };
 
-  // Xác nhận sửa chữ bằng tay
+  // Xác nhận sửa chữ tiếng Nhật bằng tay
   const handleConfirmEdit = () => {
     const trimmed = editedText.trim();
     if (trimmed && onSelectText) {
       onSelectText(trimmed);
     }
     setIsEditing(false);
+  };
+
+  // Xác nhận sửa nghĩa tiếng Việt bằng tay
+  const handleConfirmEditMeaning = () => {
+    const trimmed = editedMeaning.trim();
+    setCustomMeaning(trimmed);
+    setIsEditingMeaning(false);
+  };
+
+  // Bắt đầu sửa nghĩa tiếng Việt
+  const handleStartEditMeaning = () => {
+    setEditedMeaning(currentTranslation);
+    setIsEditingMeaning(true);
+    setTimeout(() => {
+      meaningInputRef.current?.focus();
+      meaningInputRef.current?.select();
+    }, 50);
   };
 
   return (
@@ -304,18 +349,117 @@ export function QuickFlashcardBar({
             )}
           </div>
 
-          {/* Nghĩa tiếng Việt */}
-          <div className="text-xs text-slate-300 flex items-center gap-2 pt-0.5 select-none">
-            <span className="text-emerald-400 font-semibold shrink-0">🇻🇳 Nghĩa:</span>
+          {/* Nghĩa tiếng Việt (Cho phép chỉnh sửa hoặc khôi phục bản dịch tự động) */}
+          <div className="text-xs text-slate-300 flex flex-wrap items-center gap-2 pt-0.5">
+            <span className="text-emerald-400 font-semibold shrink-0 select-none">🇻🇳 Nghĩa:</span>
             {isTranslating ? (
               <span className="flex items-center gap-1.5 text-slate-400 text-xs italic">
                 <Loader2 className="w-3 h-3 animate-spin text-amber-400" />
                 <span>Đang dịch tự động...</span>
               </span>
+            ) : isEditingMeaning ? (
+              <div className="flex flex-wrap items-center gap-1.5 flex-1 min-w-[240px]">
+                <input
+                  ref={meaningInputRef}
+                  type="text"
+                  value={editedMeaning}
+                  onChange={(e) => setEditedMeaning(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleConfirmEditMeaning();
+                    if (e.key === 'Escape') setIsEditingMeaning(false);
+                  }}
+                  placeholder="Nhập hoặc chỉnh sửa nghĩa tiếng Việt..."
+                  className="text-xs font-medium text-emerald-200 bg-slate-950 px-2.5 py-1 rounded-xl border border-emerald-500/60 focus:outline-none focus:ring-1 focus:ring-emerald-400 w-full sm:max-w-md shadow-inner"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
+                  onClick={handleConfirmEditMeaning}
+                  className="p-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold transition cursor-pointer shrink-0 shadow-sm"
+                  title="Xác nhận nghĩa tiếng Việt (Enter)"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                </button>
+
+                {/* Khôi phục bản dịch tự động nếu có */}
+                {autoTranslation && editedMeaning !== autoTranslation && (
+                  <button
+                    type="button"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onClick={() => setEditedMeaning(autoTranslation)}
+                    className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 text-[11px] font-medium border border-amber-500/40 flex items-center gap-1 transition cursor-pointer"
+                    title={`Khôi phục bản dịch gốc: 「${autoTranslation}」`}
+                  >
+                    <RotateCcw className="w-3 h-3 text-amber-400" />
+                    <span>Dịch gốc</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
+                  onClick={() => setIsEditingMeaning(false)}
+                  className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 transition cursor-pointer shrink-0"
+                  title="Hủy sửa (Esc)"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
             ) : (
-              <span className="font-medium text-emerald-300 break-words">
-                {translation || 'Chưa có bản dịch (nhấn Lưu để tạo thẻ)'}
-              </span>
+              <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
+                <span
+                  onClick={handleStartEditMeaning}
+                  className="font-medium text-emerald-300 break-words hover:text-emerald-200 cursor-pointer underline-offset-2 hover:underline transition"
+                  title="Bấm vào đây hoặc nút ✏️ để chỉnh sửa nghĩa tiếng Việt"
+                >
+                  {currentTranslation || (
+                    <span className="text-slate-500 italic">Chưa có bản dịch (Bấm ✏️ để nhập nghĩa)</span>
+                  )}
+                </span>
+
+                {/* Nút sửa nghĩa */}
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
+                  onClick={handleStartEditMeaning}
+                  className="p-1 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-emerald-300 transition cursor-pointer border border-slate-700/60"
+                  title="Chỉnh sửa nghĩa tiếng Việt theo ý bạn"
+                >
+                  <Pencil className="w-3 h-3" />
+                </button>
+
+                {/* Nếu đã sửa nghĩa khác bản dịch tự động, cho phép hoàn tác nhanh */}
+                {customMeaning && autoTranslation && customMeaning !== autoTranslation && (
+                  <button
+                    type="button"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onClick={() => {
+                      setCustomMeaning('');
+                      setEditedMeaning(autoTranslation);
+                    }}
+                    className="text-[10px] text-slate-400 hover:text-amber-300 underline cursor-pointer"
+                    title={`Khôi phục bản dịch tự động: 「${autoTranslation}」`}
+                  >
+                    (Đặt lại dịch gốc)
+                  </button>
+                )}
+              </div>
             )}
           </div>
 
@@ -336,7 +480,7 @@ export function QuickFlashcardBar({
           <div className="text-[11px] text-amber-400/80 flex items-center gap-1 pt-0.5 select-none">
             <Sparkles className="w-3 h-3 text-amber-400 shrink-0" />
             <span>
-              Mẹo: Bạn có thể <strong>kéo chuột bôi đen tiếp chữ trong ô trên</strong> hoặc bấm nút <strong>✏️</strong> để chỉnh sửa từ mong muốn!
+              Mẹo: Bạn có thể bấm nút <strong>✏️</strong> để sửa cả từ tiếng Nhật lẫn nghĩa tiếng Việt, hoặc kéo chuột bôi đen tiếp trong ô trên!
             </span>
           </div>
         </div>

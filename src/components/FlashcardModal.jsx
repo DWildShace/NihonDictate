@@ -16,6 +16,7 @@ import {
   FileSpreadsheet,
   FileCode,
   Layers,
+  Pencil,
 } from 'lucide-react';
 import {
   getFlashcards,
@@ -33,6 +34,12 @@ export function FlashcardModal({ isOpen, onClose, onCardChange }) {
   const [isFlipped, setIsFlipped] = useState(false);
   const [copiedToast, setCopiedToast] = useState(false);
 
+  // Trạng thái chỉnh sửa thẻ
+  const [editingCardId, setEditingCardId] = useState(null);
+  const [editFront, setEditFront] = useState('');
+  const [editReading, setEditReading] = useState('');
+  const [editBack, setEditBack] = useState('');
+
   // Nạp danh sách thẻ mỗi khi mở modal
   useEffect(() => {
     if (isOpen) {
@@ -40,8 +47,38 @@ export function FlashcardModal({ isOpen, onClose, onCardChange }) {
       setCards(list);
       setStudyIndex(0);
       setIsFlipped(false);
+      setEditingCardId(null);
     }
   }, [isOpen]);
+
+  const handleStartEdit = (card) => {
+    setEditingCardId(card.id);
+    setEditFront(card.front || '');
+    setEditReading(card.reading || '');
+    setEditBack(card.back || '');
+  };
+
+  const handleSaveEdit = (id) => {
+    const cleanFront = editFront.trim();
+    if (!cleanFront) return;
+    const updated = cards.map((c) =>
+      c.id === id
+        ? {
+            ...c,
+            front: cleanFront,
+            reading: editReading.trim(),
+            back: editBack.trim(),
+          }
+        : c
+    );
+    setCards(updated);
+    try {
+      localStorage.setItem('nihon_flashcards', JSON.stringify(updated));
+    } catch (e) {
+      console.error('Lỗi khi cập nhật thẻ:', e);
+    }
+    setEditingCardId(null);
+  };
 
   if (!isOpen) return null;
 
@@ -343,54 +380,130 @@ export function FlashcardModal({ isOpen, onClose, onCardChange }) {
 
               {/* Lưới thẻ Flashcards */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
-                {filteredCards.map((card) => (
-                  <div
-                    key={card.id}
-                    className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800/90 hover:border-slate-700 transition flex flex-col justify-between group"
-                  >
-                    <div>
-                      <div className="flex items-start justify-between gap-2 mb-1.5">
-                        <span className="font-jp text-base font-bold text-white group-hover:text-amber-300 transition">
-                          {card.front}
-                        </span>
-                        <button
-                          onClick={() => handleDelete(card.id)}
-                          className="text-slate-600 hover:text-rose-400 transition cursor-pointer p-1"
-                          title="Xóa thẻ này"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                {filteredCards.map((card) => {
+                  const isEditingThis = editingCardId === card.id;
+
+                  if (isEditingThis) {
+                    return (
+                      <div
+                        key={card.id}
+                        className="p-3.5 rounded-xl bg-slate-900/95 border border-amber-500/60 shadow-xl space-y-2.5 animate-fadeIn"
+                      >
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-amber-400 font-semibold uppercase tracking-wide">
+                            Từ vựng (Tiếng Nhật)
+                          </label>
+                          <input
+                            type="text"
+                            value={editFront}
+                            onChange={(e) => setEditFront(e.target.value)}
+                            className="w-full h-8 px-2.5 rounded-lg bg-slate-950 border border-slate-700 text-xs font-jp font-bold text-white focus:outline-none focus:border-amber-400"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-teal-400 font-semibold uppercase tracking-wide">
+                            Cách đọc (Furigana / Hiragana)
+                          </label>
+                          <input
+                            type="text"
+                            value={editReading}
+                            onChange={(e) => setEditReading(e.target.value)}
+                            className="w-full h-8 px-2.5 rounded-lg bg-slate-950 border border-slate-700 text-xs font-jp text-teal-300 focus:outline-none focus:border-teal-400"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-emerald-400 font-semibold uppercase tracking-wide">
+                            Nghĩa tiếng Việt
+                          </label>
+                          <input
+                            type="text"
+                            value={editBack}
+                            onChange={(e) => setEditBack(e.target.value)}
+                            placeholder="Nhập nghĩa tiếng Việt..."
+                            className="w-full h-8 px-2.5 rounded-lg bg-slate-950 border border-slate-700 text-xs text-emerald-300 font-medium focus:outline-none focus:border-emerald-400"
+                          />
+                        </div>
+
+                        <div className="flex items-center justify-end gap-2 pt-1 border-t border-slate-800">
+                          <button
+                            type="button"
+                            onClick={() => setEditingCardId(null)}
+                            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition cursor-pointer"
+                          >
+                            Hủy
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSaveEdit(card.id)}
+                            className="px-3 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold transition cursor-pointer shadow-sm"
+                          >
+                            Lưu thay đổi
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div
+                      key={card.id}
+                      className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800/90 hover:border-slate-700 transition flex flex-col justify-between group"
+                    >
+                      <div>
+                        <div className="flex items-start justify-between gap-2 mb-1.5">
+                          <span className="font-jp text-base font-bold text-white group-hover:text-amber-300 transition">
+                            {card.front}
+                          </span>
+                          <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100 transition">
+                            <button
+                              onClick={() => handleStartEdit(card)}
+                              className="text-slate-500 hover:text-amber-300 transition cursor-pointer p-1"
+                              title="Chỉnh sửa từ vựng & nghĩa tiếng Việt"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDelete(card.id)}
+                              className="text-slate-500 hover:text-rose-400 transition cursor-pointer p-1"
+                              title="Xóa thẻ này"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {card.reading && (
+                          <p className="text-xs text-teal-400 font-jp mb-1">
+                            {card.reading}
+                          </p>
+                        )}
+
+                        <p className="text-xs text-emerald-300 font-medium">
+                          {card.back || 'Chưa có bản dịch'}
+                        </p>
+
+                        {card.context && (
+                          <div className="mt-2.5 pt-2 border-t border-slate-800/80 text-[11px] text-slate-400 bg-slate-900/40 p-2 rounded-lg">
+                            <span className="text-slate-500 block">Ngữ cảnh câu:</span>
+                            <span className="font-jp text-slate-300">{card.context}</span>
+                            {card.contextVi && (
+                              <span className="text-slate-500 block text-[10px] mt-0.5">
+                                {card.contextVi}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
 
-                      {card.reading && (
-                        <p className="text-xs text-teal-400 font-jp mb-1">
-                          {card.reading}
-                        </p>
-                      )}
-
-                      <p className="text-xs text-emerald-300 font-medium">
-                        {card.back || 'Chưa có bản dịch'}
-                      </p>
-
-                      {card.context && (
-                        <div className="mt-2.5 pt-2 border-t border-slate-800/80 text-[11px] text-slate-400 bg-slate-900/40 p-2 rounded-lg">
-                          <span className="text-slate-500 block">Ngữ cảnh câu:</span>
-                          <span className="font-jp text-slate-300">{card.context}</span>
-                          {card.contextVi && (
-                            <span className="text-slate-500 block text-[10px] mt-0.5">
-                              {card.contextVi}
-                            </span>
-                          )}
-                        </div>
-                      )}
+                      <div className="mt-2 pt-2 border-t border-slate-800/60 flex items-center justify-between text-[10px] text-slate-500">
+                        <span>{card.lessonTitle || 'Bài học'}</span>
+                        <span>{card.timestamp}</span>
+                      </div>
                     </div>
-
-                    <div className="mt-2 pt-2 border-t border-slate-800/60 flex items-center justify-between text-[10px] text-slate-500">
-                      <span>{card.lessonTitle || 'Bài học'}</span>
-                      <span>{card.timestamp}</span>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
