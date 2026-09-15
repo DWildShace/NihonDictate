@@ -9,17 +9,33 @@ function formatTime(seconds = 0) {
 }
 
 export function SentenceList({
-  sentences,
+  sentences = [],
   activeIndex,
   onSelectSentence,
   completedMap = {},
 }) {
   const [isFreeMode, setIsFreeMode] = useState(true);
+  const [selectedPart, setSelectedPart] = useState('all'); // 'all' | 0, 1, 2...
+
+  const CHUNK_SIZE = 50;
+  const hasParts = sentences.length > CHUNK_SIZE;
+  const totalParts = hasParts ? Math.ceil(sentences.length / CHUNK_SIZE) : 1;
+
+  // Tính toán danh sách câu hiển thị theo Phần đã chọn
+  const displayedSentences = hasParts && selectedPart !== 'all'
+    ? sentences.slice(selectedPart * CHUNK_SIZE, (selectedPart + 1) * CHUNK_SIZE).map((s, relIdx) => ({
+        ...s,
+        originalIdx: selectedPart * CHUNK_SIZE + relIdx,
+      }))
+    : sentences.map((s, idx) => ({
+        ...s,
+        originalIdx: idx,
+      }));
 
   return (
     <div className="space-y-2 mt-3">
-      {/* Thanh tùy chọn chế độ luyện tập */}
-      <div className="flex items-center justify-between py-1.5 px-1 text-xs text-slate-400">
+      {/* Thanh tùy chọn chế độ luyện tập & Tự do */}
+      <div className="flex flex-wrap items-center justify-between gap-2 py-1.5 px-1 text-xs text-slate-400">
         <span className="text-[11px] text-slate-400">
           💡 Click vào bất kỳ câu nào để phát và luyện nghe
         </span>
@@ -51,13 +67,68 @@ export function SentenceList({
         </button>
       </div>
 
+      {/* Phân đoạn Phần tập chép cho video dài (> 50 câu) */}
+      {hasParts && (
+        <div className="space-y-1.5 p-2 rounded-xl bg-slate-950/60 border border-slate-800/80">
+          <div className="flex items-center justify-between text-[11px] text-slate-400 px-0.5">
+            <span className="font-semibold text-slate-300">Phần tập chép (Video dài):</span>
+            <span className="text-slate-500 font-mono">
+              Tổng {sentences.length} câu • {totalParts} phần
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs scrollbar-thin">
+            <button
+              onClick={() => setSelectedPart('all')}
+              className={`px-2.5 py-1 rounded-lg font-medium whitespace-nowrap transition cursor-pointer text-[11px] ${
+                selectedPart === 'all'
+                  ? 'bg-emerald-500 text-slate-950 font-bold shadow-sm'
+                  : 'bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800'
+              }`}
+            >
+              Tất cả ({sentences.length})
+            </button>
+            {Array.from({ length: totalParts }).map((_, pIdx) => {
+              const startIdx = pIdx * CHUNK_SIZE;
+              const endIdx = Math.min((pIdx + 1) * CHUNK_SIZE, sentences.length);
+              const partSentences = sentences.slice(startIdx, endIdx);
+              const partDone = partSentences.filter(s => !!completedMap[s.id]).length;
+              const isCurrentActivePart = activeIndex >= startIdx && activeIndex < endIdx;
+
+              return (
+                <button
+                  key={pIdx}
+                  onClick={() => setSelectedPart(pIdx)}
+                  className={`px-2.5 py-1 rounded-lg font-medium whitespace-nowrap transition cursor-pointer text-[11px] flex items-center gap-1 ${
+                    selectedPart === pIdx
+                      ? 'bg-emerald-500 text-slate-950 font-bold shadow-sm'
+                      : isCurrentActivePart
+                      ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/40'
+                      : 'bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800'
+                  }`}
+                  title={`Phần ${pIdx + 1}: Câu ${startIdx + 1} đến ${endIdx}`}
+                >
+                  <span>Phần {pIdx + 1} ({startIdx + 1}-{endIdx})</span>
+                  <span className={`text-[10px] px-1 rounded ${
+                    selectedPart === pIdx ? 'bg-slate-950/20 text-slate-950 font-bold' : 'text-slate-500'
+                  }`}>
+                    {partDone}/{partSentences.length}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Danh sách các câu */}
       <div className="space-y-1.5 max-h-[420px] overflow-y-auto pr-1">
-        {sentences.map((sentence, idx) => {
+        {displayedSentences.map((sentence) => {
+          const idx = sentence.originalIdx;
           const isActive = idx === activeIndex;
           const isDone = !!completedMap[sentence.id];
           const progressInfo = completedMap[sentence.id];
           const isAccessible = isDone || isFreeMode || isActive;
+
 
           const timeLabel = `${formatTime(sentence.start)} - ${formatTime(sentence.end)}`;
 

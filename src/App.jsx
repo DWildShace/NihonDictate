@@ -8,8 +8,9 @@ import { SentenceList } from './components/SentenceList';
 import { SubtitlesTab } from './components/SubtitlesTab';
 import { ShadowingTab } from './components/ShadowingTab';
 import { FlashcardModal } from './components/FlashcardModal';
+import { QuickFlashcardBar } from './components/QuickFlashcardBar';
 import { SAMPLE_LESSONS } from './data/sampleLessons';
-import { getLessonProgress, saveSentenceProgress, getFlashcards } from './utils/storage';
+import { getLessonProgress, saveSentenceProgress, getFlashcards, saveFlashcard } from './utils/storage';
 import { sanitizeRelativeTimestamps } from './utils/relativeTimestamps';
 
 export function App() {
@@ -33,6 +34,9 @@ export function App() {
   // Trạng thái Flashcard Modal
   const [isFlashcardModalOpen, setIsFlashcardModalOpen] = useState(false);
   const [flashcardsCount, setFlashcardsCount] = useState(() => getFlashcards().length);
+
+  // Trạng thái bôi đen từ vựng để tạo Flashcard nhanh ở thanh dưới Video
+  const [quickSelection, setQuickSelection] = useState(null);
 
   // Lưu trữ tiến độ học
   const [completedMap, setCompletedMap] = useState({});
@@ -173,6 +177,59 @@ export function App() {
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
   }, [activeIndex, currentLesson, completedMap, activeSentence, handlePlaySentence]);
 
+  // Lắng nghe sự kiện bôi đen (Text selection) toàn diện trên ứng dụng (cho phép bôi tiếp bên trong thanh QuickFlashcardBar)
+  useEffect(() => {
+    const handleMouseUp = (e) => {
+      // Bỏ qua nếu click vào nút bấm (button) hoặc icon điều khiển
+      if (e.target.closest && e.target.closest('button')) {
+        return;
+      }
+
+      // Bỏ qua nếu bôi đen bên trong ô input / textarea gõ chính tả
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+        return;
+      }
+
+      const sel = window.getSelection();
+      const raw = sel ? sel.toString() : '';
+      const clean = raw.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+      // Nếu có bôi đen hợp lệ (kể cả bôi đen tiếp bên trong ô chữ của thanh QuickFlashcardBar)
+      if (clean && clean.length > 0 && clean.length <= 250) {
+        setQuickSelection({
+          text: clean,
+          sentence: activeSentence,
+          originalSentenceText: activeSentence?.text || clean,
+        });
+        return;
+      }
+
+      // Nếu click bên trong thanh QuickFlashcardBar mà không có bôi đen mới -> Giữ nguyên, không đóng
+      if (e.target.closest && e.target.closest('[data-quick-flashcard-bar="true"]')) {
+        return;
+      }
+    };
+
+    document.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('touchend', handleMouseUp);
+    return () => {
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('touchend', handleMouseUp);
+    };
+  }, [activeSentence]);
+
+  // Khi chuyển sang câu khác, reset thanh bôi đen nhanh để tránh giữ bộ đệm của câu cũ
+  useEffect(() => {
+    setQuickSelection(null);
+  }, [activeSentence?.id]);
+
+  // Lưu thẻ từ thanh QuickFlashcardBar
+  const handleSaveQuickFlashcard = async (cardData) => {
+    const res = saveFlashcard(cardData);
+    setFlashcardsCount(getFlashcards().length);
+    return res;
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-[#090d16] text-slate-100 selection:bg-emerald-500 selection:text-slate-950 font-sans">
       {/* Header thanh điều khiển URL & Tiến độ & Flashcard Button */}
@@ -250,6 +307,25 @@ export function App() {
             audioBuffer={audioBuffer}
           />
 
+          {/* Thanh Quick Flashcard màu vàng cao cấp đặt ở phần trống dưới Video theo đề xuất */}
+          <QuickFlashcardBar
+            selection={quickSelection}
+            onSave={handleSaveQuickFlashcard}
+            onClear={() => setQuickSelection(null)}
+            onOpenFlashcards={() => setIsFlashcardModalOpen(true)}
+            onSelectText={(newText) => {
+              setQuickSelection((prev) => ({
+                ...prev,
+                text: newText,
+                sentence: activeSentence,
+                originalSentenceText: activeSentence?.text || '',
+              }));
+            }}
+            activeSentence={activeSentence}
+            lessonTitle={currentLesson.title}
+            videoId={currentLesson.videoId}
+          />
+
           {/* Tiêu đề & Thông tin bài học hiện tại */}
           <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800/80 space-y-2 shadow-lg">
             <div className="flex items-start justify-between gap-2">
@@ -276,7 +352,7 @@ export function App() {
               </span>
               <span>Kiểm tra</span>
               <span className="flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-800 font-mono text-emerald-400">
-                Ctrl + N
+                Alt + N
               </span>
               <span>Câu tiếp theo</span>
               <span className="flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-800 font-mono text-emerald-400">

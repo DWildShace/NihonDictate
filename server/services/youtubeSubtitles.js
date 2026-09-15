@@ -159,8 +159,8 @@ export async function fetchYouTubeSubtitles(url) {
   // 3. Chuẩn hóa nhịp câu và mốc thời gian an toàn (Safe Gap 0.22s)
   const normalizedSentences = normalizeSubtitles(rawList, 0.22, 0.8);
 
-  // Giới hạn tối đa 150 câu để đảm bảo hiệu năng
-  const sliceLimit = Math.min(normalizedSentences.length, 150);
+  // Nâng giới hạn tối đa lên 2000 câu để hỗ trợ trọn vẹn video dài ~1-2 tiếng
+  const sliceLimit = Math.min(normalizedSentences.length, 2000);
   const slicedSentences = normalizedSentences.slice(0, sliceLimit);
 
   console.log(`[TOKENIZER] Đang phân tích âm đọc Hiragana & Furigana cho ${slicedSentences.length} câu...`);
@@ -197,3 +197,48 @@ export async function fetchYouTubeSubtitles(url) {
 
   return lessonData;
 }
+
+/**
+ * Lấy danh sách các bài học đã được cache trên máy chủ
+ */
+export function getCachedLessonsList() {
+  try {
+    if (!fs.existsSync(CACHE_DIR)) return [];
+    const files = fs.readdirSync(CACHE_DIR).filter(f => f.endsWith('.json'));
+    const list = [];
+    for (const file of files) {
+      try {
+        const filePath = path.join(CACHE_DIR, file);
+        const raw = fs.readFileSync(filePath, 'utf-8');
+        const data = JSON.parse(raw);
+        const videoId = data.videoId || file.replace('.json', '');
+        const title = data.videoTitle || data.title || `Video ${videoId}`;
+        const totalSentences = data.totalSentences || (Array.isArray(data.sentences) ? data.sentences.length : 0);
+        list.push({ videoId, title, totalSentences });
+      } catch (err) {}
+    }
+    return list;
+  } catch (e) {
+    return [];
+  }
+}
+
+/**
+ * Xóa một bài học khỏi cache theo videoId
+ */
+export function deleteCachedLesson(videoId) {
+  try {
+    if (!videoId) return false;
+    const cacheFile = path.join(CACHE_DIR, `${videoId}.json`);
+    if (fs.existsSync(cacheFile)) {
+      fs.unlinkSync(cacheFile);
+      console.log(`🗑️ [SUBTITLES CACHE] Đã xóa cache cho video: ${videoId}`);
+      return true;
+    }
+    return false;
+  } catch (err) {
+    console.error(`[CACHE DELETE ERROR] Không thể xóa cache video ${videoId}:`, err.message);
+    return false;
+  }
+}
+

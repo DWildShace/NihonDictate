@@ -57,13 +57,16 @@ export function getFlashcards() {
 export function saveFlashcard(card) {
   try {
     const cards = getFlashcards();
+    const cleanFront = (card.front || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!cleanFront) return null;
+
     const newCard = {
       id: card.id || `card_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      front: card.front?.trim() || '',
-      reading: card.reading?.trim() || '',
-      back: card.back?.trim() || '',
-      context: card.context?.trim() || '',
-      contextVi: card.contextVi?.trim() || '',
+      front: cleanFront,
+      reading: (card.reading || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim(),
+      back: (card.back || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim(),
+      context: (card.context || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim(),
+      contextVi: (card.contextVi || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim(),
       timestamp: card.timestamp || '',
       lessonTitle: card.lessonTitle || '',
       videoId: card.videoId || '',
@@ -75,14 +78,15 @@ export function saveFlashcard(card) {
       c => c.front === newCard.front && c.lessonTitle === newCard.lessonTitle
     );
 
-    if (existingIndex >= 0) {
-      cards[existingIndex] = { ...cards[existingIndex], ...newCard };
+    const isUpdated = existingIndex >= 0;
+    if (isUpdated) {
+      cards[existingIndex] = { ...cards[existingIndex], ...newCard, id: cards[existingIndex].id };
     } else {
       cards.unshift(newCard);
     }
 
     localStorage.setItem(FLASHCARDS_KEY, JSON.stringify(cards));
-    return newCard;
+    return { card: newCard, isUpdated };
   } catch (e) {
     console.error('Lỗi khi lưu Flashcard:', e);
     return null;

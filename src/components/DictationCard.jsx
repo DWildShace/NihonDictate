@@ -74,6 +74,18 @@ export function DictationCard({
     setTimeout(() => setIsShaking(false), 450);
   };
 
+  // Lắng nghe phím tắt toàn cục cho Alt+H / Alt+G để dịch tiếng Việt mọi lúc, kể cả khi ô input bị disabled (> 90% hoàn thành)
+  useEffect(() => {
+    const handleGlobalAltH = (e) => {
+      if (e.altKey && (e.key === 'h' || e.key === 'H' || e.key === 'g' || e.key === 'G')) {
+        e.preventDefault();
+        handleToggleMeaningHint();
+      }
+    };
+    window.addEventListener('keydown', handleGlobalAltH);
+    return () => window.removeEventListener('keydown', handleGlobalAltH);
+  }, [sentence?.text, sentence?.vietnamese, dynamicTranslation, isTranslating, showHintMeaning]);
+
   const isCompleted = !!(checkResult?.isCorrect || hasGivenUp);
 
   /**
@@ -312,7 +324,10 @@ export function DictationCard({
   };
 
   // Lắng nghe sự kiện bôi đen (Text selection) trong khu vực đáp án
-  const handleAnswerTextSelection = () => {
+  const handleAnswerTextSelection = (e) => {
+    // Nếu click trúng button hoặc các phần tử tương tác thì không can thiệp
+    if (e?.target?.closest && e.target.closest('button')) return;
+
     const selection = window.getSelection();
     const text = selection ? selection.toString().trim() : '';
     if (text && text.length > 0 && text.length <= 120) {
@@ -364,18 +379,16 @@ export function DictationCard({
       videoId,
     };
 
-    saveFlashcard(card);
-    setSavedFlashcardToast(`Đã lưu 「${front}」 vào Flashcards! ⭐`);
+    const res = saveFlashcard(card);
+    const msg = res?.isUpdated
+      ? `Đã cập nhật 「${front}」 trong Flashcards! ⭐`
+      : `Đã lưu 「${front}」 vào Flashcards! ⭐`;
+    setSavedFlashcardToast(msg);
     setTimeout(() => setSavedFlashcardToast(''), 3500);
 
     if (onCardAdded) {
       onCardAdded();
     }
-
-    setSelectedText('');
-    try {
-      window.getSelection()?.removeAllRanges();
-    } catch (e) {}
   };
 
   // Xử lý phím tắt trong ô input
@@ -424,17 +437,14 @@ export function DictationCard({
       return;
     }
 
-    // 7. Enter: Kiểm tra hoặc Sang câu kế
+    // 7. Enter: Kiểm tra câu vừa gõ (Chỉ dùng khi chưa hoàn thành, không tự động nhảy câu để tránh xung đột khi gõ tiếng Nhật)
     if (e.key === 'Enter') {
       // Nếu đang trong quá trình gõ IME (Windows Japanese IME / Unikey), không can thiệp để IME commit ký tự
       if (e.nativeEvent?.isComposing || isComposingRef.current) {
         return;
       }
       e.preventDefault();
-      const isDone = checkResult?.isCorrect || hasGivenUp;
-      if (isDone) {
-        handleAttemptNext();
-      } else {
+      if (!isCompleted) {
         handleCheck();
       }
     }
@@ -603,23 +613,23 @@ export function DictationCard({
           </div>
         </div>
 
-        {/* Nút Kiểm tra hoặc Câu tiếp theo */}
+        {/* Nút Kiểm tra hoặc Câu tiếp theo - Cố định kích thước w-36 h-12 để tránh co giãn input */}
         {isCompleted ? (
           <button
             onClick={handleAttemptNext}
-            className="h-12 px-5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-sm flex items-center justify-center gap-1.5 transition cursor-pointer shadow-lg shadow-emerald-500/20 whitespace-nowrap"
-            title="Nhấn phím Enter hoặc Alt+N để sang câu tiếp theo"
+            className="w-36 h-12 shrink-0 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-sm flex items-center justify-center gap-1.5 transition cursor-pointer shadow-lg shadow-emerald-500/20 whitespace-nowrap"
+            title="Nhấn phím Alt+N để sang câu tiếp theo"
           >
             {isLastSentence ? (
               <>
                 <PartyPopper className="w-4 h-4" />
-                <span>Hoàn thành bài</span>
+                <span>Hoàn thành</span>
               </>
             ) : (
               <>
-                <span>Câu tiếp theo</span>
+                <span>Câu tiếp</span>
                 <span className="text-[10px] bg-slate-950/30 text-slate-950 px-1.5 py-0.5 rounded font-mono font-bold">
-                  Enter / Alt+N
+                  Alt+N
                 </span>
                 <ArrowRight className="w-4 h-4 ml-0.5" />
               </>
@@ -628,7 +638,7 @@ export function DictationCard({
         ) : (
           <button
             onClick={handleCheck}
-            className="h-12 px-6 rounded-2xl bg-teal-600/90 hover:bg-teal-500 text-white font-semibold text-sm flex items-center justify-center gap-1.5 transition cursor-pointer shadow-lg shadow-teal-700/20 whitespace-nowrap"
+            className="w-36 h-12 shrink-0 rounded-2xl bg-teal-600/90 hover:bg-teal-500 text-white font-semibold text-sm flex items-center justify-center gap-1.5 transition cursor-pointer shadow-lg shadow-teal-700/20 whitespace-nowrap"
             title="Kiểm tra câu vừa gõ (Enter)"
           >
             <Check className="w-4 h-4" />
@@ -715,29 +725,6 @@ export function DictationCard({
             </button>
           </div>
 
-          {/* Banner nổi khi người dùng BÔI ĐEN một từ / cụm từ */}
-          {selectedText && (
-            <div className="mb-3 p-2.5 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs flex items-center justify-between gap-2 shadow-lg animate-fadeIn">
-              <div className="flex items-center gap-2 overflow-hidden">
-                <Sparkles className="w-4 h-4 text-amber-400 shrink-0 animate-spin" />
-                <div className="truncate">
-                  <span className="text-slate-300">Đã bôi đen: </span>
-                  <strong className="font-jp text-white text-sm bg-slate-900 px-2 py-0.5 rounded border border-amber-500/30">
-                    {selectedText}
-                  </strong>
-                </div>
-              </div>
-              <button
-                onClick={() => handleSaveToFlashcard(selectedText)}
-                className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1 transition cursor-pointer shrink-0 shadow"
-                title="Lưu từ vừa bôi đen vào Flashcards để ném vào Anki / Quizlet"
-              >
-                <BookmarkPlus className="w-3.5 h-3.5" />
-                <span>Lưu vào Flashcard</span>
-              </button>
-            </div>
-          )}
-
           {/* Hiển thị phân tích ký tự Diff (Xanh: Đúng, Đỏ: Sai, Xám: Thiếu) */}
           <div className="p-3 bg-slate-900 rounded-lg border border-slate-800 font-jp text-lg leading-relaxed flex flex-wrap gap-1 items-center">
             {checkResult.diff.map((item, index) => {
@@ -794,31 +781,51 @@ export function DictationCard({
               </div>
             )}
 
-            {(sentence.vietnamese || dynamicTranslation) && (
-              <div className="text-xs text-emerald-400 font-medium">
-                🇻🇳 Dịch nghĩa: {sentence.vietnamese || dynamicTranslation}
-              </div>
-            )}
+            {/* Dịch nghĩa tiếng Việt (Hiển thị hoặc cho phép bấm dịch tức thì nếu chưa có) */}
+            <div className="pt-2 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
+              {(sentence.vietnamese || dynamicTranslation) ? (
+                <div className="text-xs text-emerald-400 font-medium flex items-baseline gap-1.5">
+                  <span className="shrink-0 font-semibold text-emerald-500">🇻🇳 Dịch nghĩa:</span>
+                  <span className="text-slate-100 font-normal">{sentence.vietnamese || dynamicTranslation}</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-slate-500 text-[11px]">Chưa có bản dịch tiếng Việt</span>
+                  <button
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={handleToggleMeaningHint}
+                    disabled={isTranslating}
+                    className="px-2.5 py-1 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 text-xs font-semibold border border-blue-500/40 flex items-center gap-1 transition cursor-pointer"
+                    title="Dịch câu này sang tiếng Việt (Phím tắt: Alt+H)"
+                  >
+                    <HelpCircle className="w-3.5 h-3.5 text-blue-400" />
+                    <span>{isTranslating ? 'Đang dịch...' : 'Dịch nghĩa (Alt+H)'}</span>
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Thanh tác vụ Flashcard bên dưới câu trả lời */}
           <div className="mt-3.5 pt-3 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2">
               <button
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={() => handleSaveToFlashcard(selectedText || sentence.text)}
                 className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-sm"
-                title="Lưu từ đang bôi đen hoặc toàn bộ câu này vào sổ Flashcard để xuất Anki"
+                title="Lưu toàn bộ câu này vào sổ Flashcard để xuất Anki"
               >
                 <BookmarkPlus className="w-4 h-4 text-amber-400" />
                 <span>
                   {selectedText
                     ? `Lưu từ 「${selectedText}」 vào Flashcard`
-                    : '⭐ Lưu câu này vào Flashcard'}
+                    : '⭐ Lưu cả câu này vào Flashcard'}
                 </span>
               </button>
 
               {onOpenFlashcards && (
                 <button
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={onOpenFlashcards}
                   className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium flex items-center gap-1.5 transition cursor-pointer border border-slate-700"
                   title="Mở sổ quản lý Flashcards và xuất file Anki / Quizlet"
@@ -922,7 +929,8 @@ export function DictationCard({
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
           <span className="text-slate-400 font-medium">⌨️ Phím tắt:</span>
           <span><kbd className="px-1.5 py-0.5 rounded bg-slate-800 text-emerald-400 font-mono text-[10px] border border-slate-700">Ctrl+Space</kbd> Nghe lại</span>
-          <span><kbd className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-200 font-mono text-[10px] border border-slate-700">Enter</kbd> / <kbd className="px-1.5 py-0.5 rounded bg-slate-800 text-emerald-400 font-mono text-[10px] border border-slate-700">Alt+N</kbd> Câu kế</span>
+          <span><kbd className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-200 font-mono text-[10px] border border-slate-700">Enter</kbd> Kiểm tra</span>
+          <span><kbd className="px-1.5 py-0.5 rounded bg-slate-800 text-emerald-400 font-mono text-[10px] border border-slate-700">Alt+N</kbd> Câu kế</span>
           <span><kbd className="px-1.5 py-0.5 rounded bg-slate-800 text-blue-300 font-mono text-[10px] border border-slate-700">Alt+H</kbd> Nghĩa TV</span>
           <span><kbd className="px-1.5 py-0.5 rounded bg-slate-800 text-teal-300 font-mono text-[10px] border border-slate-700">Alt+F</kbd> Furigana</span>
           <span><kbd className="px-1.5 py-0.5 rounded bg-slate-800 text-emerald-300 font-mono text-[10px] border border-slate-700">Alt+L</kbd> Lặp câu</span>
